@@ -143,9 +143,30 @@ public struct ReachHistory: Codable, Sendable, Hashable {
 }
 
 public enum Reach {
-    /// Soma dos downloads de todos os arquivos de todas as versões publicadas.
+    /// Soma dos downloads das versões publicadas, sem contar os arquivos de verificação
+    /// (somas SHA, assinaturas), que acompanham o app mas não representam uso.
     public static func totalDownloads(_ releases: [GHRelease]) -> Int {
-        releases.reduce(0) { sum, r in sum + r.assets.reduce(0) { $0 + $1.downloadCount } }
+        releases.reduce(0) { sum, r in
+            sum + r.assets.filter { !isVerificationFile($0.name) }.reduce(0) { $0 + $1.downloadCount }
+        }
+    }
+
+    /// Quantas versões têm ao menos um arquivo para baixar que não seja de verificação.
+    public static func releasesWithDownloads(_ releases: [GHRelease]) -> Int {
+        releases.filter { $0.assets.contains { !isVerificationFile($0.name) } }.count
+    }
+
+    static let verificationExtensions: Set<String> = ["sha1", "sha256", "sha512", "md5", "sig", "asc", "minisig", "sigstore", "pem"]
+
+    /// Arquivo que só serve para conferir outro: “app.zip.sha256”, “checksums.txt”, “SHA256SUMS”…
+    public static func isVerificationFile(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        let ext = (lower as NSString).pathExtension
+        if verificationExtensions.contains(ext) { return true }
+        let base = (lower as NSString).deletingPathExtension
+        if base.contains("checksum") { return true }
+        // Listas de somas no padrão do coreutils: SHA256SUMS, sha512sums.txt, MD5SUMS…
+        return base.range(of: #"^(sha\d*|md5|b2)sums?$"#, options: .regularExpression) != nil
     }
 
     /// Nome amigável do site de origem.

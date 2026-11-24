@@ -54,8 +54,20 @@ struct ReachTests {
           "html_url": "https://github.com/octocat/Hello-World/releases/v1.0.0", "assets": []}]
         """
         let releases = try GitHubClient.decoder.decode([GHRelease].self, from: Data(json.utf8))
-        #expect(Reach.totalDownloads(releases) == 9)
+        // O .sha256 só serve para conferir o zip: não conta como download do app.
+        #expect(Reach.totalDownloads(releases) == 7)
+        #expect(Reach.releasesWithDownloads(releases) == 1)
         #expect(Reach.totalDownloads([]) == 0)
+    }
+
+    @Test func reconheceArquivosDeVerificação() {
+        for name in ["app.zip.sha256", "SHA256SUMS", "sha512sums.txt", "MD5SUMS", "checksums.txt",
+                     "app_1.0_checksums.txt", "app.zip.sig", "app.zip.asc", "app.zip.minisig"] {
+            #expect(Reach.isVerificationFile(name), "\(name) deveria ser de verificação")
+        }
+        for name in ["GitArbor-1.0.0.zip", "app.dmg", "albums.zip", "app-arm64.tar.gz", "sums-calculator.pkg"] {
+            #expect(!Reach.isVerificationFile(name), "\(name) não é de verificação")
+        }
     }
 
     @Test func nomesAmigáveis() {

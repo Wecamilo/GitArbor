@@ -73,7 +73,7 @@ struct RepoReachCard: View {
             ReachNumber(value: clones?.count, label: "Clones", symbol: "square.on.square.fill", tint: .teal,
                         detail: clones.map { "\(Phrases.plural($0.uniques, "pessoa", "pessoas")) · 14 dias" } ?? "últimos 14 dias")
             ReachNumber(value: downloads, label: "Downloads", symbol: "arrow.down.circle.fill", tint: .pink,
-                        detail: releaseCount == 0 ? "nenhuma versão publicada" : "somando \(Phrases.plural(releaseCount, "versão", "versões"))")
+                        detail: releaseCount == 0 ? "nenhum arquivo para baixar" : "somando \(Phrases.plural(releaseCount, "versão", "versões"))")
             ReachNumber(value: history?.totalViews, label: "Visitas guardadas", symbol: "archivebox.fill", tint: .orange,
                         detail: history?.firstDay.map { "desde \(Self.shortDate($0))" } ?? "histórico neste Mac")
         }
@@ -170,7 +170,7 @@ struct RepoReachCard: View {
         async let rel = try? client.releases(name)
 
         if let releases = await rel {
-            releaseCount = releases.count
+            releaseCount = Reach.releasesWithDownloads(releases)
             downloads = Reach.totalDownloads(releases)
         }
         if let views = await v, let clones = await c {
