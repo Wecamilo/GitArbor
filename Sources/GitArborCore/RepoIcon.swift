@@ -25,8 +25,14 @@ public enum RepoIcon {
 
     /// O melhor caminho para usar como ícone, ou nil quando nada serve.
     public static func bestCandidate(in paths: [String]) -> String? {
-        paths.compactMap { path in score(path).map { (path, $0) } }
-            .max { a, b in a.1 != b.1 ? a.1 < b.1 : a.0.count > b.0.count }?.0
+        var best: (path: String, score: Int)?
+        for path in paths {
+            guard let s = score(path) else { continue }
+            // Maior pontuação vence; no empate, o caminho mais curto.
+            if let b = best, s < b.score || (s == b.score && path.count >= b.path.count) { continue }
+            best = (path, s)
+        }
+        return best?.path
     }
 
     /// Pontuação do caminho como ícone; nil quando não é candidato.

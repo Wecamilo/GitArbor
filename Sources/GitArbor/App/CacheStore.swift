@@ -67,7 +67,8 @@ enum CacheStore {
 /// Histórico de alcance (visitas e clones por dia) de cada repositório, guardado em
 /// ~/Library/Application Support/Git Arbor/reach.json. O GitHub só mostra 14 dias; aqui eles se acumulam.
 /// A chave é o número do repositório, que não muda quando ele é renomeado.
-enum ReachStore {
+/// `nonisolated`: o app usa o MainActor por padrão, e este código roda na fila própria (fora da principal).
+nonisolated enum ReachStore {
     private static let queue = DispatchQueue(label: "GitArbor.ReachStore", qos: .utility)
 
     static var url: URL {

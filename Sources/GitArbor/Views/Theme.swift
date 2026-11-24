@@ -148,22 +148,33 @@ struct ArborGlyph: View {
             let w = geo.size.width
             ZStack(alignment: .topLeading) {
                 ForEach(Array(ArborCards.all.enumerated()), id: \.offset) { k, card in
-                    let progress = k == 2 ? nodes : min(1, max(0, branches * 2 - CGFloat(k)))
-                    RoundedRectangle(cornerRadius: w * ArborCards.corner, style: .continuous)
-                        .fill(fill(card, k))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: w * ArborCards.corner, style: .continuous)
-                                .strokeBorder(LinearGradient(colors: [.white.opacity(0.7), .white.opacity(0)], startPoint: .top, endPoint: .center), lineWidth: max(0.5, w * 0.006))
-                        )
-                        .shadow(color: .black.opacity(0.18), radius: w * 0.03, y: w * 0.018)
-                        .frame(width: w * card.w, height: w * ArborCards.height)
-                        .offset(x: w * card.x, y: w * card.y + (1 - progress) * w * 0.08)
-                        .opacity(Double(progress))
+                    cardView(card, k, width: w)
                 }
             }
         }
         .aspectRatio(1, contentMode: .fit)
         .accessibilityHidden(true)
+    }
+
+    /// Quanto cada pasta já apareceu (0…1). Separado do corpo para o compilador checar os tipos rápido.
+    private func progress(_ k: Int) -> CGFloat {
+        if k == 2 { return nodes }
+        let raw: CGFloat = branches * 2 - CGFloat(k)
+        return min(1, max(0, raw))
+    }
+
+    private func cardView(_ card: ArborCards.Card, _ k: Int, width w: CGFloat) -> some View {
+        let p: CGFloat = progress(k)
+        let corner: CGFloat = w * ArborCards.corner
+        let shine = LinearGradient(colors: [.white.opacity(0.7), .white.opacity(0)], startPoint: .top, endPoint: .center)
+        let lift: CGFloat = (1 - p) * w * 0.08
+        return RoundedRectangle(cornerRadius: corner, style: .continuous)
+            .fill(fill(card, k))
+            .overlay(RoundedRectangle(cornerRadius: corner, style: .continuous).strokeBorder(shine, lineWidth: max(0.5, w * 0.006)))
+            .shadow(color: .black.opacity(0.18), radius: w * 0.03, y: w * 0.018)
+            .frame(width: w * card.w, height: w * ArborCards.height)
+            .offset(x: w * card.x, y: w * card.y + lift)
+            .opacity(Double(p))
     }
 
     private func fill(_ card: ArborCards.Card, _ k: Int) -> AnyShapeStyle {
