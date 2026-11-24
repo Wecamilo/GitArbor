@@ -1,0 +1,28 @@
+name: Versão
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  versao:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Testes do núcleo
+        run: swift test
+      - name: Gera o app para baixar
+        run: Scripts/package_release.sh "${GITHUB_REF_NAME}"
+      - name: Publica a versão no GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/GitArbor-$VERSION.zip" "dist/GitArbor-$VERSION.zip.sha256" \
+            --title "Git Arbor $VERSION" --generate-notes

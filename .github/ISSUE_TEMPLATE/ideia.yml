@@ -1,0 +1,11 @@
+name: Ideia ou melhoria
+description: Sugira algo novo para o Git Arbor.
+labels: [ideia]
+body:
+  - type: textarea
+    id: ideia
+    attributes:
+      label: Qual é a ideia?
+      description: O que você gostaria de fazer no app e por quê.
+    validations:
+      required: true

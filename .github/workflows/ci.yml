@@ -1,0 +1,21 @@
+name: Testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Versão do Swift
+        run: swift --version
+      - name: Testes do núcleo
+        run: swift test
+      - name: Compila o app
+        run: swift build -c release
