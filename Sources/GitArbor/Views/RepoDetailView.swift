@@ -241,6 +241,8 @@ private struct RepoOverview: View {
                 StatTile(value: repo.branch, label: "Ramo principal", symbol: "arrow.triangle.branch", tint: .teal, hint: "A versão oficial")
             }
 
+            RepoReachCard(repo: repo)
+
             if !languages.isEmpty { languagesCard }
 
             Card(padding: 18) {

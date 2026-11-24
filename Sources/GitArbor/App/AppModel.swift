@@ -493,6 +493,7 @@ final class AppModel {
         clearSession(keepCache: false)
         preloaded = nil
         CacheStore.delete()
+        ReachStore.delete()
         repoIcons.clear()
         TokenStore.delete()
         let defaults = UserDefaults.standard

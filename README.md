@@ -14,6 +14,7 @@
 - **Entrada com Touch ID** (ou senha do Mac), com visual próprio: anel de “commits” em volta da digital.
 - **Início**: números da conta, quadradinhos de atividade do último ano, projetos que pedem atenção e linha do tempo.
 - **Repositórios**: cartões coloridos, busca, filtros e criação. Em cada um: visão geral (README e linguagens), arquivos, histórico com o que mudou em cada commit, ramos (à frente/atrás), tarefas (issues), pedidos de mudança (pull requests, com juntar/fechar), automações (Actions, com rodar de novo), versões (releases) e ajustes (nome, visibilidade, arquivar, apagar).
+- **Alcance** de cada projeto seu: visitas, clones, downloads das versões, de onde as pessoas vieram e páginas mais vistas, com histórico guardado no Mac além dos 14 dias que o GitHub mostra.
 - **Projetos no Mac**: situação de cada pasta com Git (não salvo, falta enviar, novidades para baixar), salvar versão com prévia das mudanças, enviar, baixar, publicar no GitHub e começar a usar Git numa pasta.
 - **Proteção de senhas e chaves**: avisa quando arquivos que parecem senhas ou chaves estão prestes a ir para o GitHub e procura vazamentos no histórico.
 - **Notificações**, **Aprender** (lições ilustradas) e **Conta e ajustes**.

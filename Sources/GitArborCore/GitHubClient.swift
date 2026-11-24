@@ -414,6 +414,28 @@ public struct GitHubClient: Sendable {
         try await perform("DELETE", "repos/\(fullName)/releases/\(id)")
     }
 
+    // MARK: Alcance (Insights → Traffic; só para quem pode mudar o repositório)
+
+    /// Visitas por dia nos últimos 14 dias.
+    public func trafficViews(_ fullName: String) async throws -> GHTrafficViews {
+        try await get("repos/\(fullName)/traffic/views", query: ["per": "day"])
+    }
+
+    /// Clones por dia nos últimos 14 dias.
+    public func trafficClones(_ fullName: String) async throws -> GHTrafficClones {
+        try await get("repos/\(fullName)/traffic/clones", query: ["per": "day"])
+    }
+
+    /// Os 10 sites que mais trouxeram visitas nos últimos 14 dias.
+    public func trafficReferrers(_ fullName: String) async throws -> [GHReferrer] {
+        try await get("repos/\(fullName)/traffic/popular/referrers")
+    }
+
+    /// As 10 páginas mais vistas nos últimos 14 dias.
+    public func trafficPaths(_ fullName: String) async throws -> [GHPopularPath] {
+        try await get("repos/\(fullName)/traffic/popular/paths")
+    }
+
     public func setStar(_ fullName: String, starred: Bool) async throws {
         try await perform(starred ? "PUT" : "DELETE", "user/starred/\(fullName)")
     }
