@@ -1,126 +1,262 @@
 #!/bin/bash
-# Testa, empacota, assina e instala o Git Arbor em ~/Applications.
-# Uso: ./build_app.sh [--no-launch]
+#
+# build_app.sh — compila, testa, assina e instala o Git Arbor em ~/Applications.
+#
+# Uso:
+#   ./build_app.sh [opções]
+#
+# Opções:
+#   --no-launch   Instala sem abrir o app ao final.
+#   -h, --help    Mostra esta ajuda.
+#
+# Variáveis de ambiente:
+#   INSTALL_DIR       Pasta de destino (padrão: ~/Applications).
+#   SWIFT_BUILD_ROOT  Pasta de compilação do SwiftPM (padrão: ~/Library/Caches/GitArbor/SwiftPM).
+#
+# Requisitos:
+#   macOS 15 ou superior, Swift 6.2 ou superior (Xcode ou Command Line Tools) e OpenSSL.
+#
+# Etapas:
+#   1. Executa a suíte de testes; qualquer falha interrompe a instalação.
+#   2. Garante uma identidade de assinatura local e estável (criada na primeira execução).
+#   3. Monta o pacote .app (Scripts/make_bundle.sh) e o assina com essa identidade.
+#   4. Encerra a instância em execução, substitui a instalação e guarda a anterior como backup.
+#   5. Abre a nova versão e confirma que ela iniciou.
+#
+# Versão:
+#   MAJOR.MINOR vem do arquivo VERSION; PATCH é o número de commits desde a última alteração
+#   desse arquivo; BUILD é o total de commits (sempre crescente). Fora de um repositório Git,
+#   usa PATCH = 0 e BUILD = 1.
+#
+# Assinatura:
+#   A identidade é um certificado autoassinado, válido só neste Mac, guardado num chaveiro
+#   dedicado em "~/Library/Application Support/Git Arbor/Signing". Como ela não muda entre
+#   versões, o macOS continua liberando ao app a chave do GitHub guardada no Chaves sem
+#   pedir nova autorização a cada atualização. Para distribuição pública, use
+#   Scripts/package_release.sh.
+#
+# Códigos de saída:
+#   0  sucesso
+#   1  falha (testes, assinatura, instalação ou inicialização)
+#   2  uso incorreto
+#
 set -euo pipefail
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd "$DIR"
+# --------------------------------------------------------------------------------------------
+# Configuração
+# --------------------------------------------------------------------------------------------
+
+readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly APP_NAME="Git Arbor.app"
+readonly EXECUTABLE="GitArbor"
+readonly TARGET_DIR="${INSTALL_DIR:-$HOME/Applications}"
+readonly APP_DIR="$TARGET_DIR/$APP_NAME"
+readonly SUPPORT_DIR="$HOME/Library/Application Support/Git Arbor"
+readonly BACKUP_DIR="$SUPPORT_DIR/Previous Builds.noindex"
+readonly BACKUPS_TO_KEEP=3
+readonly SIGNING_DIR="$SUPPORT_DIR/Signing"
+readonly SIGNING_KEYCHAIN="$SIGNING_DIR/gitarbor-signing.keychain-db"
+readonly SIGNING_PASSWORD_FILE="$SIGNING_DIR/keychain-password"
+readonly SIGNING_IDENTITY="Git Arbor Local Signing"
+
+export BUNDLE_ID="${BUNDLE_ID:-io.github.gitarbor.GitArbor}"
+export SWIFT_BUILD_ROOT="${SWIFT_BUILD_ROOT:-$HOME/Library/Caches/GitArbor/SwiftPM}"
+
+# --------------------------------------------------------------------------------------------
+# Funções auxiliares
+# --------------------------------------------------------------------------------------------
+
+# Arquivos e pastas temporários, removidos ao sair (com sucesso ou não).
+TEMP_PATHS=()
+cleanup() { (( ${#TEMP_PATHS[@]} )) && rm -rf -- "${TEMP_PATHS[@]}"; return 0; }
+trap cleanup EXIT
+
+step() { printf '==> %s\n' "$*"; }
+warn() { printf 'Aviso: %s\n' "$*" >&2; }
+die()  { printf 'Erro: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    sed -n '3,14p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# Espera até `tentativas` × 0,1 s pela condição; retorna 0 se ela ficou verdadeira.
+wait_until() {
+    local tentativas="$1"; shift
+    local i
+    for ((i = 0; i < tentativas; i++)); do
+        "$@" && return 0
+        sleep 0.1
+    done
+    "$@"
+}
+
+process_alive() { kill -0 "$1" 2>/dev/null; }
+process_gone()  { ! process_alive "$1"; }
+app_running()   { pgrep -f "$APP_DIR/Contents/MacOS/$EXECUTABLE" >/dev/null; }
+
+# --------------------------------------------------------------------------------------------
+# Argumentos
+# --------------------------------------------------------------------------------------------
 
 LAUNCH=1
 for arg in "$@"; do
     case "$arg" in
         --no-launch) LAUNCH=0 ;;
-        *) echo "Uso: $0 [--no-launch]" >&2; exit 2 ;;
+        -h|--help)   usage; exit 0 ;;
+        *)           usage >&2; exit 2 ;;
     esac
 done
 
-# MAJOR.MINOR vem do arquivo VERSION (mudado à mão); o último número conta os commits
-# desde essa mudança. O build conta todos os commits e nunca volta atrás.
+cd "$ROOT"
+
+# --------------------------------------------------------------------------------------------
+# Versão
+# --------------------------------------------------------------------------------------------
+
 RELEASE="$(tr -d '[:space:]' < VERSION)"
-PATCH="$(git rev-list --count "$(git log -1 --format=%H -- VERSION)..HEAD")"
-VERSION="$RELEASE.$PATCH"
-BUILD="$(git rev-list --count HEAD)"
-APP_NAME="Git Arbor.app"
-EXECUTABLE="GitArbor"
-BUNDLE_ID="io.github.gitarbor.GitArbor"
-export BUNDLE_ID SWIFT_BUILD_ROOT="$HOME/Library/Caches/GitArbor/SwiftPM"
-
-SUPPORT="$HOME/Library/Application Support/Git Arbor"
-SIGNING_DIR="$SUPPORT/Signing"
-SIGNING_KEYCHAIN="$SIGNING_DIR/gitarbor-signing.keychain-db"
-SIGNING_PASSWORD_FILE="$SIGNING_DIR/keychain-password"
-SIGNING_IDENTITY="Git Arbor Local Signing"
-
-echo "==> Testando..."
-mkdir -p "$SWIFT_BUILD_ROOT"
-swift test --scratch-path "$SWIFT_BUILD_ROOT" 2>&1 | grep -E "Test run|✘|error:" || true
-if ! swift test --scratch-path "$SWIFT_BUILD_ROOT" >/dev/null 2>&1; then
-    echo "ERRO: há testes falhando. Instalação cancelada." >&2
-    exit 1
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    VERSION_COMMIT="$(git log -1 --format=%H -- VERSION)"
+    PATCH="$(git rev-list --count "${VERSION_COMMIT:+$VERSION_COMMIT..}HEAD")"
+    BUILD="$(git rev-list --count HEAD)"
+else
+    PATCH=0
+    BUILD=1
 fi
+readonly VERSION="$RELEASE.$PATCH"
 
-echo "==> Preparando a identidade de assinatura (estável entre versões)..."
-# Assinatura estável: o Chaves continua liberando a chave do GitHub para o app depois de cada atualização.
-mkdir -p -m 700 "$SIGNING_DIR"
-if [ ! -e "$SIGNING_KEYCHAIN" ]; then
+# --------------------------------------------------------------------------------------------
+# 1. Testes
+# --------------------------------------------------------------------------------------------
+
+step "Executando os testes"
+mkdir -p "$SWIFT_BUILD_ROOT"
+TEST_LOG="$(mktemp)"
+TEMP_PATHS+=("$TEST_LOG")
+if ! swift test --scratch-path "$SWIFT_BUILD_ROOT" >"$TEST_LOG" 2>&1; then
+    grep -E "✘|error:" "$TEST_LOG" >&2 || tail -n 30 "$TEST_LOG" >&2
+    die "há testes falhando; instalação cancelada."
+fi
+grep -E "Test run with" "$TEST_LOG" || true
+
+# --------------------------------------------------------------------------------------------
+# 2. Identidade de assinatura
+# --------------------------------------------------------------------------------------------
+
+create_signing_identity() {
+    local tmp p12_password keychain_password legacy=""
+    tmp="$(mktemp -d)"
+    # A chave privada temporária é removida ao sair, mesmo se algo falhar no meio.
+    TEMP_PATHS+=("$tmp")
+
     openssl rand -hex 32 > "$SIGNING_PASSWORD_FILE"
     chmod 600 "$SIGNING_PASSWORD_FILE"
-    TMP_SIGN="$(mktemp -d)"
-    P12_PASS="$(openssl rand -hex 16)"
+    keychain_password="$(<"$SIGNING_PASSWORD_FILE")"
+    p12_password="$(openssl rand -hex 16)"
+
     openssl req -new -newkey rsa:2048 -nodes -x509 -sha256 -days 3650 \
         -subj "/CN=$SIGNING_IDENTITY/O=Git Arbor Local" \
         -addext "basicConstraints=critical,CA:false" \
         -addext "keyUsage=critical,digitalSignature" \
         -addext "extendedKeyUsage=codeSigning" \
-        -keyout "$TMP_SIGN/key.pem" -out "$TMP_SIGN/cert.pem" >/dev/null 2>&1
-    LEGACY=""
-    if [[ "$(openssl version)" == OpenSSL\ 3* ]]; then LEGACY="-legacy"; fi
-    openssl pkcs12 ${LEGACY:+$LEGACY} -export -out "$TMP_SIGN/id.p12" -inkey "$TMP_SIGN/key.pem" \
-        -in "$TMP_SIGN/cert.pem" -name "$SIGNING_IDENTITY" -passout "pass:$P12_PASS" >/dev/null 2>&1
-    KC_PASS="$(<"$SIGNING_PASSWORD_FILE")"
-    security create-keychain -p "$KC_PASS" "$SIGNING_KEYCHAIN"
+        -keyout "$tmp/key.pem" -out "$tmp/cert.pem" >/dev/null 2>&1
+
+    # O OpenSSL 3 gera PKCS#12 com algoritmos que o `security` do macOS não importa.
+    [[ "$(openssl version)" == OpenSSL\ 3* ]] && legacy="-legacy"
+    openssl pkcs12 ${legacy:+"$legacy"} -export -out "$tmp/identity.p12" \
+        -inkey "$tmp/key.pem" -in "$tmp/cert.pem" -name "$SIGNING_IDENTITY" \
+        -passout "pass:$p12_password" >/dev/null 2>&1
+
+    security create-keychain -p "$keychain_password" "$SIGNING_KEYCHAIN"
     security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN"
-    security unlock-keychain -p "$KC_PASS" "$SIGNING_KEYCHAIN"
-    security import "$TMP_SIGN/id.p12" -k "$SIGNING_KEYCHAIN" -P "$P12_PASS" -T /usr/bin/codesign >/dev/null
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$SIGNING_KEYCHAIN" >/dev/null
-    rm -rf "$TMP_SIGN"
+    security unlock-keychain -p "$keychain_password" "$SIGNING_KEYCHAIN"
+    security import "$tmp/identity.p12" -k "$SIGNING_KEYCHAIN" -P "$p12_password" \
+        -T /usr/bin/codesign >/dev/null
+    # Permite que o codesign use a chave sem exibir um pedido de autorização.
+    security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+        -k "$keychain_password" "$SIGNING_KEYCHAIN" >/dev/null
+
+    rm -rf "$tmp"
+}
+
+step "Preparando a identidade de assinatura"
+mkdir -p -m 700 "$SIGNING_DIR"
+if [[ ! -e "$SIGNING_KEYCHAIN" ]]; then
+    step "Criando identidade local (somente na primeira execução)"
+    create_signing_identity
 fi
 security unlock-keychain -p "$(<"$SIGNING_PASSWORD_FILE")" "$SIGNING_KEYCHAIN"
-CERT_SHA1="$(security find-certificate -c "$SIGNING_IDENTITY" -Z "$SIGNING_KEYCHAIN" | awk '/^SHA-1 hash:/{print $3; exit}')"
-if ! [[ "$CERT_SHA1" =~ ^[[:xdigit:]]{40}$ ]]; then
-    echo "ERRO: certificado de assinatura não encontrado." >&2
-    exit 1
-fi
-REQUIREMENT="identifier \"$BUNDLE_ID\" and certificate leaf = H\"$CERT_SHA1\""
+CERT_SHA1="$(security find-certificate -c "$SIGNING_IDENTITY" -Z "$SIGNING_KEYCHAIN" \
+    | awk '/^SHA-1 hash:/ { print $3; exit }')"
+[[ "$CERT_SHA1" =~ ^[[:xdigit:]]{40}$ ]] || die "certificado de assinatura não encontrado em $SIGNING_KEYCHAIN."
 
-TARGET_DIR="$HOME/Applications"
-APP_DIR="$TARGET_DIR/$APP_NAME"
+# O requisito fixa o identificador e o certificado: é o que o Chaves usa para reconhecer o app.
+readonly REQUIREMENT="identifier \"$BUNDLE_ID\" and certificate leaf = H\"$CERT_SHA1\""
+
+# --------------------------------------------------------------------------------------------
+# 3. Montagem e assinatura
+# --------------------------------------------------------------------------------------------
+
 mkdir -p "$TARGET_DIR"
-STAGING_ROOT=$(mktemp -d "$TARGET_DIR/.GitArbor-install.XXXXXX")
-STAGED_APP="$STAGING_ROOT/$APP_NAME"
-trap 'rm -rf "$STAGING_ROOT"' EXIT
-"$DIR/Scripts/make_bundle.sh" "$STAGING_ROOT" "$VERSION" "$BUILD"
+# A pasta temporária fica no mesmo volume do destino, para a troca final ser um `mv` atômico.
+STAGING_DIR="$(mktemp -d "$TARGET_DIR/.GitArbor-install.XXXXXX")"
+TEMP_PATHS+=("$STAGING_DIR")
+readonly STAGED_APP="$STAGING_DIR/$APP_NAME"
 
-echo "==> Assinando..."
-codesign --force --keychain "$SIGNING_KEYCHAIN" -s "$CERT_SHA1" --timestamp=none \
-    -i "$BUNDLE_ID" -r="designated => $REQUIREMENT" "$STAGED_APP"
+"$ROOT/Scripts/make_bundle.sh" "$STAGING_DIR" "$VERSION" "$BUILD"
+
+step "Assinando"
+codesign --force --keychain "$SIGNING_KEYCHAIN" --sign "$CERT_SHA1" --timestamp=none \
+    --identifier "$BUNDLE_ID" -r="designated => $REQUIREMENT" "$STAGED_APP"
 codesign --verify --deep --strict -R="$REQUIREMENT" "$STAGED_APP"
 
-echo "==> Substituindo a instalação (a anterior fica guardada)..."
-BACKUPS="$SUPPORT/Previous Builds.noindex"
-mkdir -p "$BACKUPS"
-for OLD_PID in $(pgrep -x "$EXECUTABLE" || true); do
-    if [ "$(ps -p "$OLD_PID" -o comm=)" = "$APP_DIR/Contents/MacOS/$EXECUTABLE" ]; then
-        # Pede para fechar; o Git Arbor não guarda nada pendente, então, se o pedido for
-        # recusado ou demorar, encerra o processo com o sinal de término.
-        osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
-        for _ in $(seq 1 50); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.1; done
-        kill -0 "$OLD_PID" 2>/dev/null && kill -TERM "$OLD_PID" 2>/dev/null
-        for _ in $(seq 1 50); do kill -0 "$OLD_PID" 2>/dev/null || break; sleep 0.1; done
-        kill -0 "$OLD_PID" 2>/dev/null && { echo "A versão anterior não encerrou. Instalação cancelada." >&2; exit 1; }
+# --------------------------------------------------------------------------------------------
+# 4. Instalação
+# --------------------------------------------------------------------------------------------
+
+step "Encerrando a versão em execução"
+for pid in $(pgrep -x "$EXECUTABLE" || true); do
+    # Só encerra a cópia instalada em $APP_DIR, nunca outra cópia do app.
+    [[ "$(ps -p "$pid" -o comm=)" == "$APP_DIR/Contents/MacOS/$EXECUTABLE" ]] || continue
+    osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+    if ! wait_until 50 process_gone "$pid"; then
+        # O app não mantém estado pendente, então o encerramento forçado é seguro.
+        kill -TERM "$pid" 2>/dev/null || true
+        wait_until 50 process_gone "$pid" || die "a versão em execução não encerrou; instalação cancelada."
     fi
 done
-BACKUP="$BACKUPS/$(date +%Y%m%d-%H%M%S)"
-if [ -d "$APP_DIR" ]; then mkdir -p "$BACKUP"; mv "$APP_DIR" "$BACKUP/$APP_NAME.backup"; fi
+
+step "Instalando em $APP_DIR"
+mkdir -p "$BACKUP_DIR"
+BACKUP="$BACKUP_DIR/$(date +%Y%m%d-%H%M%S)"
+if [[ -d "$APP_DIR" ]]; then
+    mkdir -p "$BACKUP"
+    mv "$APP_DIR" "$BACKUP/$APP_NAME.backup"
+fi
 if ! mv "$STAGED_APP" "$APP_DIR"; then
-    [ -d "$BACKUP/$APP_NAME.backup" ] && mv "$BACKUP/$APP_NAME.backup" "$APP_DIR"
-    exit 1
+    # Restaura a versão anterior se a troca falhar.
+    [[ -d "$BACKUP/$APP_NAME.backup" ]] && mv "$BACKUP/$APP_NAME.backup" "$APP_DIR"
+    die "não foi possível mover o app para $APP_DIR."
 fi
 codesign --verify --deep --strict -R="$REQUIREMENT" "$APP_DIR"
-touch "$APP_DIR"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP_DIR" >/dev/null 2>&1 || true
-# Guarda só as três builds anteriores mais recentes.
-ls -1 "$BACKUPS" | sort -r | tail -n +4 | while IFS= read -r OLD; do rm -rf -- "$BACKUPS/$OLD"; done || true
 
-INSTALLED="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Contents/Info.plist")"
-if [ "$LAUNCH" = "1" ]; then
+# Atualiza o registro do Launch Services (ícone, nome e versão no Finder).
+touch "$APP_DIR"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -f "$APP_DIR" >/dev/null 2>&1 || true
+
+# Mantém apenas os backups mais recentes.
+find "$BACKUP_DIR" -mindepth 1 -maxdepth 1 -type d | sort -r | tail -n +$((BACKUPS_TO_KEEP + 1)) \
+    | while IFS= read -r old; do rm -rf -- "$old"; done
+
+# --------------------------------------------------------------------------------------------
+# 5. Inicialização
+# --------------------------------------------------------------------------------------------
+
+INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_DIR/Contents/Info.plist")"
+if (( LAUNCH )); then
+    step "Abrindo o Git Arbor"
     open "$APP_DIR"
-    for _ in $(seq 1 50); do pgrep -f "$APP_DIR/Contents/MacOS/$EXECUTABLE" >/dev/null && break; sleep 0.1; done
-    if pgrep -f "$APP_DIR/Contents/MacOS/$EXECUTABLE" >/dev/null; then
-        echo "==> Git Arbor $INSTALLED aberto."
-    else
-        echo "AVISO: o app não abriu." >&2
-        exit 1
-    fi
+    wait_until 50 app_running || die "o app foi instalado, mas não iniciou."
 fi
-echo "==> Sucesso! Git Arbor $INSTALLED (build $BUILD) instalado em: $APP_DIR"
+
+step "Git Arbor $INSTALLED_VERSION (build $BUILD) instalado em $APP_DIR"

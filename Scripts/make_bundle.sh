@@ -1,40 +1,53 @@
 #!/bin/bash
-# Compila em modo Release e monta o pacote "Git Arbor.app" (ainda sem assinatura).
-# Uso: Scripts/make_bundle.sh <pasta de saída> <versão> <build>
-# Usado pelo build_app.sh (instalação local) e pelo package_release.sh (versão para baixar).
+#
+# make_bundle.sh — compila o Git Arbor em modo Release e monta o pacote "Git Arbor.app".
+#
+# Uso:
+#   Scripts/make_bundle.sh <pasta de saída> <versão> <build>
+#
+# O pacote é gerado sem assinatura. Quem chama decide como assinar:
+#   build_app.sh            identidade local estável, para instalar neste Mac;
+#   package_release.sh      assinatura ad hoc, para distribuição.
+#
+# Variáveis de ambiente:
+#   BUNDLE_ID         Identificador do app (padrão: io.github.gitarbor.GitArbor).
+#   SWIFT_BUILD_ROOT  Pasta de compilação do SwiftPM (padrão: ~/Library/Caches/GitArbor/SwiftPM).
+#
 set -euo pipefail
 
-if [ "$#" -ne 3 ]; then
-    echo "Uso: $0 <pasta de saída> <versão> <build>" >&2
+die() { printf 'Erro: %s\n' "$*" >&2; exit 1; }
+
+if [[ $# -ne 3 ]]; then
+    printf 'Uso: %s <pasta de saída> <versão> <build>\n' "$0" >&2
     exit 2
 fi
-OUT_DIR="$1"
-VERSION="$2"
-BUILD="$3"
+readonly OUT_DIR="$1"
+readonly VERSION="$2"
+readonly BUILD="$3"
+[[ -d "$OUT_DIR" ]] || die "a pasta de saída não existe: $OUT_DIR"
 
-ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )/.." && pwd )"
+readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly APP_NAME="Git Arbor.app"
+readonly EXECUTABLE="GitArbor"
+readonly BUNDLE_ID="${BUNDLE_ID:-io.github.gitarbor.GitArbor}"
+readonly SWIFT_BUILD_ROOT="${SWIFT_BUILD_ROOT:-$HOME/Library/Caches/GitArbor/SwiftPM}"
+
 cd "$ROOT"
-
-APP_NAME="Git Arbor.app"
-EXECUTABLE="GitArbor"
-BUNDLE_ID="${BUNDLE_ID:-io.github.gitarbor.GitArbor}"
-
-SWIFT_BUILD_ROOT="${SWIFT_BUILD_ROOT:-$HOME/Library/Caches/GitArbor/SwiftPM}"
 mkdir -p "$SWIFT_BUILD_ROOT"
 
-echo "==> Compilando em modo Release..."
+printf '==> Compilando (Release)\n'
 swift build -c release --scratch-path "$SWIFT_BUILD_ROOT"
 BIN_DIR="$(swift build -c release --scratch-path "$SWIFT_BUILD_ROOT" --show-bin-path)"
 
-APP="$OUT_DIR/$APP_NAME"
-CONTENTS="$APP/Contents"
+printf '==> Montando %s %s (build %s)\n' "$APP_NAME" "$VERSION" "$BUILD"
+readonly APP="$OUT_DIR/$APP_NAME"
+readonly CONTENTS="$APP/Contents"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources"
-cp "$BIN_DIR/$EXECUTABLE" "$CONTENTS/MacOS/$EXECUTABLE"
-chmod 755 "$CONTENTS/MacOS/$EXECUTABLE"
-cp "$ROOT/Resources/AppIcon.icns" "$CONTENTS/Resources/"
+install -m 755 "$BIN_DIR/$EXECUTABLE" "$CONTENTS/MacOS/$EXECUTABLE"
+install -m 644 "$ROOT/Resources/AppIcon.icns" "$CONTENTS/Resources/AppIcon.icns"
 
-cat << PLIST > "$CONTENTS/Info.plist"
+cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -58,7 +71,8 @@ cat << PLIST > "$CONTENTS/Info.plist"
 </dict>
 </plist>
 PLIST
-plutil -lint "$CONTENTS/Info.plist" >/dev/null
-echo "APPL????" > "$CONTENTS/PkgInfo"
+plutil -lint "$CONTENTS/Info.plist" >/dev/null || die "Info.plist inválido."
+printf 'APPL????' > "$CONTENTS/PkgInfo"
+
+# Atributos estendidos (ex.: quarentena, Finder) invalidam a assinatura feita em seguida.
 xattr -cr "$APP"
-echo "==> Pacote montado: $APP ($VERSION, build $BUILD)"
