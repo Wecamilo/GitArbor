@@ -116,8 +116,11 @@ public struct ReachHistory: Codable, Sendable, Hashable {
         updatedAt = now
     }
 
-    /// Primeiro dia guardado.
-    public var firstDay: Date? { days.keys.min().flatMap(Self.date) }
+    /// Primeiro dia com alguma visita ou clone. O GitHub devolve sempre 14 dias, com zero
+    /// até nos dias anteriores à criação do repositório; esses zeros não contam como início.
+    public var firstDay: Date? {
+        days.filter { $0.value.views > 0 || $0.value.clones > 0 }.keys.min().flatMap(Self.date)
+    }
 
     public var totalViews: Int { days.values.reduce(0) { $0 + $1.views } }
     public var totalClones: Int { days.values.reduce(0) { $0 + $1.clones } }

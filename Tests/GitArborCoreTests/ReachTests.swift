@@ -31,6 +31,20 @@ struct ReachTests {
         #expect(h.firstDay == day("2026-11-01"))
     }
 
+    @Test func inícioIgnoraDiasZeradosDoComeço() {
+        var h = ReachHistory()
+        // Repositório criado no dia 24: o GitHub manda os 13 dias anteriores com zero.
+        let zeros = (10...23).map { GHTrafficDay(timestamp: day("2026-11-\($0)"), count: 0, uniques: 0) }
+        h.merge(views: zeros + [GHTrafficDay(timestamp: day("2026-11-24"), count: 1, uniques: 1)],
+                clones: zeros + [GHTrafficDay(timestamp: day("2026-11-24"), count: 24, uniques: 12)])
+        #expect(h.firstDay == day("2026-11-24"))
+        #expect(h.series(lastDays: 30, until: day("2026-11-25")).count == 2)
+        #expect(ReachHistory().firstDay == nil)
+        var vazio = ReachHistory()
+        vazio.merge(views: zeros, clones: zeros)
+        #expect(vazio.firstDay == nil)
+    }
+
     @Test func sérieContínuaComZeros() {
         var h = ReachHistory()
         h.merge(views: [GHTrafficDay(timestamp: day("2026-11-20"), count: 6, uniques: 2),
